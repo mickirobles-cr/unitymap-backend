@@ -115,7 +115,7 @@ app.get("/getUserRole/:username", (req, res) => {
 });
 
 /* =====================================================
-      LISTA DE USUARIOS (SOLO ADMIN)
+      LISTA DE USUARIOS (solo admin)
 ======================================================*/
 app.get("/users", (req, res) => {
   const { adminKey } = req.query;
@@ -132,13 +132,55 @@ app.get("/users", (req, res) => {
 });
 
 /* =====================================================
-      (FUTURO) LISTA DE PUNTOS
+  ELIMINAR USUARIO (solo admin)
 ======================================================*/
-app.get("/points", (req, res) => {
-  res.json({
-    ok: true,
-    points: []
-  });
+app.delete("/user/:username", (req, res) => {
+  const { adminKey } = req.query;
+  const { username } = req.params;
+
+  if (adminKey !== "unitymap-admin-access") {
+    return res.status(403).json({ ok: false, msg: "No autorizado" });
+  }
+
+  if (username === "admin") {
+    return res.status(400).json({ ok: false, msg: "No se puede eliminar el admin por defecto" });
+  }
+
+  let users = loadUsers();
+  users = users.filter(u => u.username !== username);
+  saveUsers(users);
+
+  res.json({ ok: true, msg: `Usuario ${username} eliminado` });
+});
+
+/* =====================================================
+  CAMBIAR ROL (solo admin)
+======================================================*/
+app.patch("/user/:username/role", (req, res) => {
+  const { adminKey } = req.query;
+  const { username } = req.params;
+  const { role } = req.body;
+
+  if (adminKey !== "unitymap-admin-access") {
+    return res.status(403).json({ ok: false, msg: "No autorizado" });
+  }
+
+  if (!["user", "admin"].includes(role)) {
+    return res.status(400).json({ ok: false, msg: "Rol inválido" });
+  }
+
+  if (username === "admin") {
+    return res.status(400).json({ ok: false, msg: "No se puede cambiar el rol del admin por defecto" });
+  }
+
+  const users = loadUsers();
+  const user = users.find(u => u.username === username);
+  if (!user) return res.status(404).json({ ok: false, msg: "Usuario no encontrado" });
+
+  user.role = role;
+  saveUsers(users);
+
+  res.json({ ok: true, msg: `Rol de ${username} cambiado a ${role}` });
 });
 
 /* =====================================================
@@ -151,4 +193,5 @@ app.get("/", (req, res) => {
 app.listen(PORT, () => {
   console.log(`Servidor corriendo en puerto ${PORT}`);
 });
+
 
