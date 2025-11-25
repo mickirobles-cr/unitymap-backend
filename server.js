@@ -28,9 +28,28 @@ function saveUsers(users) {
   fs.writeFileSync(DB_FILE, JSON.stringify(users, null, 2));
 }
 
-/* ==============================
+/* =====================================================
+    CREAR ADMIN POR DEFECTO SI NO EXISTE
+======================================================*/
+(async () => {
+  let users = loadUsers();
+  const admin = users.find(u => u.username === "admin");
+
+  if (!admin) {
+    const hashed = await bcrypt.hash("12345", 10);
+    users.push({
+      username: "admin",
+      password: hashed,
+      role: "admin"
+    });
+    saveUsers(users);
+    console.log("Usuario admin creado (user: admin / pass: 12345)");
+  }
+})();
+
+/* =====================================================
       REGISTRO
-===============================*/
+======================================================*/
 app.post("/register", async (req, res) => {
   const { username, password } = req.body;
 
@@ -44,15 +63,21 @@ app.post("/register", async (req, res) => {
   }
 
   const hashed = await bcrypt.hash(password, 10);
-  users.push({ username, password: hashed });
+
+  users.push({
+    username,
+    password: hashed,
+    role: "user" // por defecto
+  });
+
   saveUsers(users);
 
   res.json({ ok: true, msg: "Usuario registrado correctamente" });
 });
 
-/* ==============================
+/* =====================================================
         LOGIN
-===============================*/
+======================================================*/
 app.post("/login", async (req, res) => {
   const { username, password } = req.body;
 
@@ -67,12 +92,58 @@ app.post("/login", async (req, res) => {
   if (!valid)
     return res.status(400).json({ ok: false, msg: "Contraseña incorrecta" });
 
-  res.json({ ok: true, msg: "Login exitoso" });
+  res.json({
+    ok: true,
+    msg: "Login exitoso",
+    role: user.role
+  });
 });
 
-/* ==============================
+/* =====================================================
+      OBTENER ROL DE USUARIO
+======================================================*/
+app.get("/getUserRole/:username", (req, res) => {
+  const { username } = req.params;
+
+  const users = loadUsers();
+  const user = users.find(u => u.username === username);
+
+  if (!user)
+    return res.status(404).json({ ok: false, msg: "Usuario no existe" });
+
+  res.json({ ok: true, role: user.role });
+});
+
+/* =====================================================
+      LISTA DE USUARIOS (SOLO ADMIN)
+======================================================*/
+app.get("/users", (req, res) => {
+  const { adminKey } = req.query;
+
+  if (adminKey !== "unitymap-admin-access")
+    return res.status(403).json({ ok: false, msg: "No autorizado" });
+
+  const users = loadUsers().map(u => ({
+    username: u.username,
+    role: u.role
+  }));
+
+  res.json({ ok: true, users });
+});
+
+/* =====================================================
+      (FUTURO) LISTA DE PUNTOS
+======================================================*/
+app.get("/points", (req, res) => {
+  res.json({
+    ok: true,
+    points: []
+  });
+});
+
+/* =====================================================
       INICIAR SERVIDOR
-===============================*/
+======================================================*/
 app.get("/", (req, res) => {
   res.send("Backend UnityMap funcionando");
 });
@@ -80,3 +151,4 @@ app.get("/", (req, res) => {
 app.listen(PORT, () => {
   console.log(`Servidor corriendo en puerto ${PORT}`);
 });
+
