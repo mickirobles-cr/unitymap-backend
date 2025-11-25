@@ -24,34 +24,20 @@ if (!fs.existsSync(POINTS_FILE)) fs.writeFileSync(POINTS_FILE, JSON.stringify([]
 // ================================
 // FUNCIONES AUXILIARES
 // ================================
-function loadUsers() {
-  return JSON.parse(fs.readFileSync(USERS_FILE));
-}
+const loadUsers = () => JSON.parse(fs.readFileSync(USERS_FILE));
+const saveUsers = (users) => fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2));
+const findUser = (username) => loadUsers().find(u => u.username === username);
 
-function saveUsers(users) {
-  fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2));
-}
+const loadPoints = () => JSON.parse(fs.readFileSync(POINTS_FILE));
+const savePoints = (points) => fs.writeFileSync(POINTS_FILE, JSON.stringify(points, null, 2));
 
-function findUser(username) {
-  const users = loadUsers();
-  return users.find(u => u.username === username);
-}
-
-function loadPoints() {
-  return JSON.parse(fs.readFileSync(POINTS_FILE));
-}
-
-function savePoints(points) {
-  fs.writeFileSync(POINTS_FILE, JSON.stringify(points, null, 2));
-}
-
-function requireAdminKey(req, res) {
+const requireAdminKey = (req, res) => {
   if (req.query.adminKey !== ADMIN_KEY) {
     res.status(403).json({ ok: false, msg: "No autorizado" });
     return false;
   }
   return true;
-}
+};
 
 // ================================
 // CREAR ADMIN POR DEFECTO
@@ -76,9 +62,8 @@ app.post("/register", async (req, res) => {
   if (!username || !password) return res.status(400).json({ ok: false, msg: "Faltan datos" });
 
   const users = loadUsers();
-  if (users.find(u => u.username === username)) {
+  if (users.find(u => u.username === username))
     return res.status(400).json({ ok: false, msg: "El usuario ya existe" });
-  }
 
   const hashed = await bcrypt.hash(password, 10);
   users.push({ username, password: hashed, role: "user" });
@@ -92,24 +77,23 @@ app.post("/login", async (req, res) => {
   const user = findUser(username);
 
   if (!user) return res.status(400).json({ ok: false, msg: "Usuario no encontrado" });
+
   const valid = await bcrypt.compare(password, user.password);
   if (!valid) return res.status(400).json({ ok: false, msg: "Contraseña incorrecta" });
 
   res.json({ ok: true, msg: "Login exitoso", role: user.role });
 });
 
-// Obtener rol de usuario
+// Obtener rol
 app.get("/getUserRole/:username", (req, res) => {
   const user = findUser(req.params.username);
   if (!user) return res.status(404).json({ ok: false, msg: "Usuario no existe" });
-
   res.json({ ok: true, role: user.role });
 });
 
 // Listar usuarios (solo admin)
 app.get("/users", (req, res) => {
   if (!requireAdminKey(req, res)) return;
-
   const users = loadUsers().map(u => ({ username: u.username, role: u.role }));
   res.json({ ok: true, users });
 });
@@ -122,9 +106,8 @@ app.delete("/user/:username", (req, res) => {
   if (username === "admin") return res.status(400).json({ ok: false, msg: "No se puede eliminar el admin por defecto" });
 
   let users = loadUsers();
-  if (!users.find(u => u.username === username)) {
+  if (!users.find(u => u.username === username))
     return res.status(404).json({ ok: false, msg: "Usuario no encontrado" });
-  }
 
   users = users.filter(u => u.username !== username);
   saveUsers(users);
@@ -169,7 +152,6 @@ app.post("/points", (req, res) => {
   const newPoint = { id: uuidv4(), user, type, desc, createdAt: new Date().toISOString() };
   points.push(newPoint);
   savePoints(points);
-
   res.json({ ok: true, msg: "Punto agregado", point: newPoint });
 });
 
@@ -197,15 +179,9 @@ app.delete("/points", (req, res) => {
 // ================================
 // RUTA RAÍZ
 // ================================
-app.get("/", (req, res) => {
-  res.send("Backend UnityMap funcionando");
-});
+app.get("/", (req, res) => res.send("Backend UnityMap funcionando"));
 
 // ================================
 // INICIAR SERVIDOR
 // ================================
-app.listen(PORT, () => {
-  console.log(`Servidor corriendo en puerto ${PORT}`);
-});
-
-
+app.listen(PORT, () => console.log(`Servidor corriendo en puerto ${PORT}`));
