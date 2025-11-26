@@ -1,187 +1,206 @@
 import express from "express";
-import fs from "fs";
 import bcrypt from "bcrypt";
 import cors from "cors";
 import { v4 as uuidv4 } from "uuid";
+import mongoose from "mongoose";
+import multer from "multer";
+import cloudinary from "cloudinary";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 // ================================
-// CONFIGURACIÓN Y MIDDLEWARE
+// MIDDLEWARE
 // ================================
 app.use(cors());
 app.use(express.json());
 
-const USERS_FILE = "./users.json";
-const POINTS_FILE = "./points.json";
-const ADMIN_KEY = "unitymap-admin-access";
-
-// Crear archivos si no existen
-if (!fs.existsSync(USERS_FILE)) fs.writeFileSync(USERS_FILE, JSON.stringify([]));
-if (!fs.existsSync(POINTS_FILE)) fs.writeFileSync(POINTS_FILE, JSON.stringify([]));
+// ================================
+// MONGODB
+// ================================
+mongoose.connect(process.env.MONGO_URI)
+  .then(() => console.log("MongoDB conectado"))
+  .catch(err => console.error("Error MongoDB:", err));
 
 // ================================
-// FUNCIONES AUXILIARES
+// CLOUDINARY
 // ================================
-const loadUsers = () => JSON.parse(fs.readFileSync(USERS_FILE));
-const saveUsers = (users) => fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2));
-const findUser = (username) => loadUsers().find(u => u.username === username);
+cloudinary.config({
+  cloud_name: process.env.CLOUD_NAME,
+  api_key: process.env.CLOUD_KEY,
+  api_secret: process.env.CLOUD_SECRET
+});
 
-const loadPoints = () => JSON.parse(fs.readFileSync(POINTS_FILE));
-const savePoints = (points) => fs.writeFileSync(POINTS_FILE, JSON.stringify(points, null, 2));
-
-const requireAdminKey = (req, res) => {
-  if (req.query.adminKey !== ADMIN_KEY) {
-    res.status(403).json({ ok: false, msg: "No autorizado" });
-    return false;
-  }
-  return true;
-};
+const upload = multer({ dest: "temp/" });
 
 // ================================
-// CREAR ADMIN POR DEFECTO
+// MODELOS
+// ================================
+const UserSchema = new mongoose.Schema({
+  username: String,
+  password: String,
+  role: String,
+  foto: String
+});
+
+const PointSchema = new mongoose.Schema({
+  user: String,
+  type: String,
+  desc: String,
+  createdAt: String
+});
+
+const User = mongoose.model("User", UserSchema);
+const Point = mongoose.model("Point", PointSchema);
+
+// ================================
+// CREAR ADMIN SI NO EXISTE
 // ================================
 (async () => {
-  const users = loadUsers();
-  if (!users.find(u => u.username === "admin")) {
+  const adminExists = await User.findOne({ username: "admin" });
+  if (!adminExists) {
     const hashed = await bcrypt.hash("12345", 10);
-    users.push({ username: "admin", password: hashed, role: "admin" });
-    saveUsers(users);
-    console.log("Usuario admin creado (user: admin / pass: 12345)");
+    await User.create({
+      username: "admin",
+      password: hashed,
+      role: "admin",
+      foto: ""
+    });
+    console.log("Admin creado (admin / 12345)");
   }
 })();
 
 // ================================
-// RUTAS DE USUARIOS
+// AUTH
 // ================================
 
 // Registro
 app.post("/register", async (req, res) => {
   const { username, password } = req.body;
-  if (!username || !password) return res.status(400).json({ ok: false, msg: "Faltan datos" });
 
-  const users = loadUsers();
-  if (users.find(u => u.username === username))
-    return res.status(400).json({ ok: false, msg: "El usuario ya existe" });
+  if (!username || !password)
+    return res.status(400).json({ ok: false, msg: "Faltan datos" });
+
+  const exists = await User.findOne({ username });
+  if (exists)
+    return res.status(400).json({ ok: false, msg: "Usuario ya existe" });
 
   const hashed = await bcrypt.hash(password, 10);
-  users.push({ username, password: hashed, role: "user" });
-  saveUsers(users);
-  res.json({ ok: true, msg: "Usuario registrado correctamente" });
+
+  await User.create({
+    username,
+    password: hashed,
+    role: "user",
+    foto: ""
+  });
+
+  res.json({ ok: true, msg: "Usuario registrado" });
 });
 
 // Login
 app.post("/login", async (req, res) => {
   const { username, password } = req.body;
-  const user = findUser(username);
 
-  if (!user) return res.status(400).json({ ok: false, msg: "Usuario no encontrado" });
+  const user = await User.findOne({ username });
+  if (!user)
+    return res.status(400).json({ ok: false, msg: "Usuario no encontrado" });
 
   const valid = await bcrypt.compare(password, user.password);
-  if (!valid) return res.status(400).json({ ok: false, msg: "Contraseña incorrecta" });
+  if (!valid)
+    return res.status(400).json({ ok: false, msg: "Contraseña incorrecta" });
 
-  res.json({ ok: true, msg: "Login exitoso", role: user.role });
+  res.json({
+    ok: true,
+    usuario: {
+      id: user._id,
+      username: user.username,
+      role: user.role,
+      foto: user.foto || ""
+    }
+  });
 });
 
-// Obtener rol
-app.get("/getUserRole/:username", (req, res) => {
-  const user = findUser(req.params.username);
-  if (!user) return res.status(404).json({ ok: false, msg: "Usuario no existe" });
-  res.json({ ok: true, role: user.role });
+// ================================
+// SUBIR FOTO DE PERFIL
+// ================================
+app.post("/upload-foto/:username", upload.single("foto"), async (req, res) => {
+  const user = await User.findOne({ username: req.params.username });
+  if (!user) return res.status(404).json({ ok: false });
+
+  const result = await cloudinary.uploader.upload(req.file.path);
+  user.foto = result.secure_url;
+  await user.save();
+
+  res.json({ ok: true, foto: result.secure_url });
 });
 
-// Listar usuarios (solo admin)
-app.get("/users", (req, res) => {
-  if (!requireAdminKey(req, res)) return;
-  const users = loadUsers().map(u => ({ username: u.username, role: u.role }));
+// ================================
+// USERS (ADMIN)
+// ================================
+app.get("/users", async (req, res) => {
+  const users = await User.find({}, { password: 0 });
   res.json({ ok: true, users });
 });
 
-// Eliminar usuario (solo admin)
-app.delete("/user/:username", (req, res) => {
-  if (!requireAdminKey(req, res)) return;
-
-  const username = req.params.username;
-  if (username === "admin") return res.status(400).json({ ok: false, msg: "No se puede eliminar el admin por defecto" });
-
-  let users = loadUsers();
-  if (!users.find(u => u.username === username))
-    return res.status(404).json({ ok: false, msg: "Usuario no encontrado" });
-
-  users = users.filter(u => u.username !== username);
-  saveUsers(users);
-  res.json({ ok: true, msg: `Usuario ${username} eliminado` });
-});
-
-// Cambiar rol (solo admin)
-app.patch("/user/:username/role", (req, res) => {
-  if (!requireAdminKey(req, res)) return;
-
-  const { username } = req.params;
+app.patch("/user/:username/role", async (req, res) => {
   const { role } = req.body;
+  const user = await User.findOne({ username: req.params.username });
 
-  if (!["user", "admin"].includes(role)) return res.status(400).json({ ok: false, msg: "Rol inválido" });
-  if (username === "admin") return res.status(400).json({ ok: false, msg: "No se puede cambiar el rol del admin por defecto" });
-
-  const users = loadUsers();
-  const user = users.find(u => u.username === username);
-  if (!user) return res.status(404).json({ ok: false, msg: "Usuario no encontrado" });
+  if (!user) return res.status(404).json({ ok: false });
+  if (req.params.username === "admin")
+    return res.status(400).json({ ok: false, msg: "No se puede cambiar rol del admin" });
 
   user.role = role;
-  saveUsers(users);
-  res.json({ ok: true, msg: `Rol de ${username} cambiado a ${role}` });
+  await user.save();
+
+  res.json({ ok: true });
+});
+
+app.delete("/user/:username", async (req, res) => {
+  if (req.params.username === "admin")
+    return res.status(400).json({ ok: false });
+
+  await User.deleteOne({ username: req.params.username });
+  res.json({ ok: true });
 });
 
 // ================================
-// RUTAS DE PUNTOS
+// POINTS
 // ================================
-
-// Listar puntos (cualquiera)
-app.get("/points", (req, res) => {
-  const points = loadPoints();
+app.get("/points", async (req, res) => {
+  const points = await Point.find();
   res.json({ ok: true, points });
 });
 
-// Crear punto
-app.post("/points", (req, res) => {
+app.post("/points", async (req, res) => {
   const { user, type, desc } = req.body;
-  if (!user || !type || !desc) return res.status(400).json({ ok: false, msg: "Faltan datos" });
 
-  const points = loadPoints();
-  const newPoint = { id: uuidv4(), user, type, desc, createdAt: new Date().toISOString() };
-  points.push(newPoint);
-  savePoints(points);
-  res.json({ ok: true, msg: "Punto agregado", point: newPoint });
+  const newPoint = await Point.create({
+    id: uuidv4(),
+    user,
+    type,
+    desc,
+    createdAt: new Date().toISOString()
+  });
+
+  res.json({ ok: true, point: newPoint });
 });
 
-// Eliminar punto individual (solo admin)
-app.delete("/point/:id", (req, res) => {
-  if (!requireAdminKey(req, res)) return;
-
-  const { id } = req.params;
-  let points = loadPoints();
-  if (!points.find(p => p.id === id)) return res.status(404).json({ ok: false, msg: "Punto no encontrado" });
-
-  points = points.filter(p => p.id !== id);
-  savePoints(points);
-  res.json({ ok: true, msg: "Punto eliminado" });
-});
-
-// Eliminar todos los puntos (solo admin)
-app.delete("/points", (req, res) => {
-  if (!requireAdminKey(req, res)) return;
-
-  savePoints([]);
-  res.json({ ok: true, msg: "Todos los puntos eliminados" });
+app.delete("/point/:id", async (req, res) => {
+  await Point.deleteOne({ _id: req.params.id });
+  res.json({ ok: true });
 });
 
 // ================================
-// RUTA RAÍZ
+// ROOT
 // ================================
-app.get("/", (req, res) => res.send("Backend UnityMap funcionando"));
+app.get("/", (req, res) => {
+  res.send("UnityMap Backend funcionando");
+});
 
 // ================================
-// INICIAR SERVIDOR
+// SERVIDOR
 // ================================
-app.listen(PORT, () => console.log(`Servidor corriendo en puerto ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`Servidor corriendo en puerto ${PORT}`);
+});
