@@ -4,7 +4,7 @@ import cors from "cors";
 import { v4 as uuidv4 } from "uuid";
 import mongoose from "mongoose";
 import multer from "multer";
-import cloudinary from "cloudinary";
+import { v2 as cloudinary } from "cloudinary";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -31,7 +31,7 @@ cloudinary.config({
   api_secret: process.env.CLOUD_SECRET
 });
 
-const upload = multer({ dest: "temp/" });
+const upload = multer({ dest: "/tmp" });
 
 // ================================
 // MODELOS
@@ -44,6 +44,7 @@ const UserSchema = new mongoose.Schema({
 });
 
 const PointSchema = new mongoose.Schema({
+  pointId: String,
   user: String,
   type: String,
   desc: String,
@@ -73,65 +74,75 @@ const Point = mongoose.model("Point", PointSchema);
 // ================================
 // AUTH
 // ================================
-
-// Registro
 app.post("/register", async (req, res) => {
-  const { username, password } = req.body;
+  try {
+    const { username, password } = req.body;
 
-  if (!username || !password)
-    return res.status(400).json({ ok: false, msg: "Faltan datos" });
+    if (!username || !password)
+      return res.status(400).json({ ok: false, msg: "Faltan datos" });
 
-  const exists = await User.findOne({ username });
-  if (exists)
-    return res.status(400).json({ ok: false, msg: "Usuario ya existe" });
+    const exists = await User.findOne({ username });
+    if (exists)
+      return res.status(400).json({ ok: false, msg: "Usuario ya existe" });
 
-  const hashed = await bcrypt.hash(password, 10);
+    const hashed = await bcrypt.hash(password, 10);
 
-  await User.create({
-    username,
-    password: hashed,
-    role: "user",
-    foto: ""
-  });
+    await User.create({
+      username,
+      password: hashed,
+      role: "user",
+      foto: ""
+    });
 
-  res.json({ ok: true, msg: "Usuario registrado" });
+    res.json({ ok: true, msg: "Usuario registrado" });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
 });
 
 // Login
 app.post("/login", async (req, res) => {
-  const { username, password } = req.body;
+  try {
+    const { username, password } = req.body;
 
-  const user = await User.findOne({ username });
-  if (!user)
-    return res.status(400).json({ ok: false, msg: "Usuario no encontrado" });
+    const user = await User.findOne({ username });
+    if (!user)
+      return res.status(400).json({ ok: false, msg: "Usuario no encontrado" });
 
-  const valid = await bcrypt.compare(password, user.password);
-  if (!valid)
-    return res.status(400).json({ ok: false, msg: "Contraseña incorrecta" });
+    const valid = await bcrypt.compare(password, user.password);
+    if (!valid)
+      return res.status(400).json({ ok: false, msg: "Contraseña incorrecta" });
 
-  res.json({
-    ok: true,
-    usuario: {
-      id: user._id,
-      username: user.username,
-      role: user.role,
-      foto: user.foto || ""
-    }
-  });
+    res.json({
+      ok: true,
+      usuario: {
+        id: user._id,
+        username: user.username,
+        role: user.role,
+        foto: user.foto || ""
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
 });
 
 // ================================
 // SUBIR FOTO DE PERFIL
 // ================================
 app.post("/upload-foto/:username", upload.single("foto"), async (req, res) => {
-  const user = await User.findOne({ username: req.params.username });
-  if (!user) return res.status(404).json({ ok: false });
+  try {
+    const user = await User.findOne({ username: req.params.username });
+    if (!user) return res.status(404).json({ ok: false });
 
-  const result = await cloudinary.uploader.upload(req.file.path);
-  user.foto = result.secure_url;
-  await user.save();
+    const result = await cloudinary.uploader.upload(req.file.path);
+    user.foto = result.secure_url;
+    await user.save();
 
-  res.json({ ok: true, foto: result.secure_url });
+    res.json({ ok: true, foto: result.secure_url });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
 });
 
 // ================================
@@ -140,28 +151,6 @@ app.post("/upload-foto/:username", upload.single("foto"), async (req, res) => {
 app.get("/users", async (req, res) => {
   const users = await User.find({}, { password: 0 });
   res.json({ ok: true, users });
-});
-
-app.patch("/user/:username/role", async (req, res) => {
-  const { role } = req.body;
-  const user = await User.findOne({ username: req.params.username });
-
-  if (!user) return res.status(404).json({ ok: false });
-  if (req.params.username === "admin")
-    return res.status(400).json({ ok: false, msg: "No se puede cambiar rol del admin" });
-
-  user.role = role;
-  await user.save();
-
-  res.json({ ok: true });
-});
-
-app.delete("/user/:username", async (req, res) => {
-  if (req.params.username === "admin")
-    return res.status(400).json({ ok: false });
-
-  await User.deleteOne({ username: req.params.username });
-  res.json({ ok: true });
 });
 
 // ================================
@@ -173,21 +162,25 @@ app.get("/points", async (req, res) => {
 });
 
 app.post("/points", async (req, res) => {
-  const { user, type, desc } = req.body;
+  try {
+    const { user, type, desc } = req.body;
 
-  const newPoint = await Point.create({
-    id: uuidv4(),
-    user,
-    type,
-    desc,
-    createdAt: new Date().toISOString()
-  });
+    const newPoint = await Point.create({
+      pointId: uuidv4(),
+      user,
+      type,
+      desc,
+      createdAt: new Date().toISOString()
+    });
 
-  res.json({ ok: true, point: newPoint });
+    res.json({ ok: true, point: newPoint });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
 });
 
 app.delete("/point/:id", async (req, res) => {
-  await Point.deleteOne({ _id: req.params.id });
+  await Point.deleteOne({ pointId: req.params.id });
   res.json({ ok: true });
 });
 
@@ -204,3 +197,5 @@ app.get("/", (req, res) => {
 app.listen(PORT, () => {
   console.log(`Servidor corriendo en puerto ${PORT}`);
 });
+
+
