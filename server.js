@@ -154,6 +154,51 @@ app.get("/users", async (req, res) => {
 });
 
 // ================================
+// ADMIN - ELIMINAR USUARIO
+// ================================
+app.delete("/user/:username", async (req, res) => {
+  try {
+    const { username } = req.params;
+    if (username === "admin") {
+      return res.status(403).json({ ok: false, msg: "No puedes borrar al admin" });
+    }
+
+    await User.deleteOne({ username });
+    await Point.deleteMany({ user: username });
+
+    res.json({ ok: true, msg: "Usuario eliminado" });
+  } catch (err) {
+    res.status(500).json({ ok: false, msg: err.message });
+  }
+});
+
+// ================================
+// ADMIN - CAMBIAR ROL
+// ================================
+app.patch("/user/:username/role", async (req, res) => {
+  try {
+    const { role } = req.body;
+    await User.updateOne({ username: req.params.username }, { role });
+    res.json({ ok: true, msg: "Rol actualizado" });
+  } catch (err) {
+    res.status(500).json({ ok: false, msg: err.message });
+  }
+});
+
+// ================================
+// ADMIN - BORRAR TODOS LOS PUNTOS
+// ================================
+app.delete("/points", async (req, res) => {
+  try {
+    await Point.deleteMany({});
+    res.json({ ok: true, msg: "Todos los puntos eliminados" });
+  } catch (err) {
+    res.status(500).json({ ok: false, msg: err.message });
+  }
+});
+
+
+// ================================
 // POINTS
 // ================================
 app.get("/points", async (req, res) => {
@@ -197,5 +242,6 @@ app.get("/", (req, res) => {
 app.listen(PORT, () => {
   console.log(`Servidor corriendo en puerto ${PORT}`);
 });
+
 
 
