@@ -31,7 +31,9 @@ cloudinary.config({
   api_secret: process.env.CLOUD_SECRET
 });
 
-const upload = multer({ dest: "/tmp" });
+const upload = multer({
+  limits: { fileSize: 3 * 1024 * 1024 }, // 3MB
+});
 
 // ================================
 // MODELOS
@@ -249,6 +251,7 @@ app.get("/", (req, res) => {
 app.listen(PORT, () => {
   console.log(`Servidor corriendo en puerto ${PORT}`);
 });
+
 
 
 
