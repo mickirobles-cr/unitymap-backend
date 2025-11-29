@@ -132,14 +132,21 @@ app.post("/login", async (req, res) => {
 // ================================
 app.post("/upload-foto/:username", upload.single("foto"), async (req, res) => {
   try {
-    const user = await User.findOne({ username: req.params.username });
-    if (!user) return res.status(404).json({ ok: false });
+    if (!req.file) return res.status(400).json({ ok: false, msg: "No se envió imagen" });
 
-    const result = await cloudinary.uploader.upload(req.file.path);
+    const user = await User.findOne({ username: req.params.username });
+    if (!user) return res.status(404).json({ ok: false, msg: "Usuario no existe" });
+
+    const result = await cloudinary.uploader.upload(req.file.path, {
+      folder: "unitymap/pfps",
+      public_id: `pfp_${req.params.username}`
+    });
+
     user.foto = result.secure_url;
     await user.save();
 
     res.json({ ok: true, foto: result.secure_url });
+
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message });
   }
@@ -242,6 +249,7 @@ app.get("/", (req, res) => {
 app.listen(PORT, () => {
   console.log(`Servidor corriendo en puerto ${PORT}`);
 });
+
 
 
 
