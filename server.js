@@ -76,7 +76,7 @@ const Point = mongoose.model("Point", PointSchema);
 // ================================
 // AUTH
 // ================================
-app.post("/register", async (req, res) => {
+app.post("/register", upload.single("pfp"), async (req, res) => {
   try {
     const { username, password } = req.body;
 
@@ -89,18 +89,27 @@ app.post("/register", async (req, res) => {
 
     const hashed = await bcrypt.hash(password, 10);
 
+    let fotoURL = "";
+
+    if (req.file) {
+      const result = await cloudinary.uploader.upload(req.file.path);
+      fotoURL = result.secure_url;
+    }
+
     await User.create({
       username,
       password: hashed,
       role: "user",
-      foto: ""
+      foto: fotoURL
     });
 
-    res.json({ ok: true, msg: "Usuario registrado" });
+    res.json({ ok: true, msg: "Usuario registrado correctamente" });
+
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message });
   }
 });
+
 
 // Login
 app.post("/login", async (req, res) => {
@@ -251,6 +260,7 @@ app.get("/", (req, res) => {
 app.listen(PORT, () => {
   console.log(`Servidor corriendo en puerto ${PORT}`);
 });
+
 
 
 
