@@ -239,9 +239,21 @@ app.delete("/points", async (req, res) => {
 // ================================
 // POINTS
 // ================================
+
 app.get("/points", async (req, res) => {
-  const points = await Point.find();
-  res.json({ ok: true, points });
+  try {
+    const points = await Point.find();
+    const pointsWithPfp = await Promise.all(points.map(async (p) => {
+      const usr = await User.findOne({ username: p.user });
+      return {
+        ...p._doc,
+        pfp: usr?.foto || ""  // añade la foto del usuario
+      };
+    }));
+    res.json({ ok: true, points: pointsWithPfp });
+  } catch (err) {
+    res.status(500).json({ ok: false, msg: err.message });
+  }
 });
 
 app.post("/points", async (req, res) => {
@@ -280,6 +292,7 @@ app.get("/", (req, res) => {
 app.listen(PORT, () => {
   console.log(`Servidor corriendo en puerto ${PORT}`);
 });
+
 
 
 
