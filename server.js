@@ -51,8 +51,8 @@ const PointSchema = new mongoose.Schema({
   user: String,
   type: String,
   desc: String,
-  **svgX: Number,** // <-- CAMPO AÑADIDO
-  **svgY: Number,** // <-- CAMPO AÑADIDO
+  svgX: Number,
+  svgY: Number,
   createdAt: String
 });
 
@@ -239,9 +239,8 @@ app.delete("/points", async (req, res) => {
 
 
 // ================================
-// POINTS
+// POINTS - GET ALL
 // ================================
-
 app.get("/points", async (req, res) => {
   try {
     const points = await Point.find();
@@ -258,17 +257,20 @@ app.get("/points", async (req, res) => {
   }
 });
 
+// ================================
+// POINTS - CREATE
+// ================================
 app.post("/points", async (req, res) => {
   try {
-    const { user, type, desc, **svgX, svgY** } = req.body; // <-- RECIBE LAS COORDENADAS
+    const { user, type, desc, svgX, svgY } = req.body; 
 
     const newPoint = await Point.create({
       pointId: uuidv4(),
       user,
       type,
       desc,
-      **svgX,** // <-- GUARDA LA COORDENADA X
-      **svgY,** // <-- GUARDA LA COORDENADA Y
+      svgX, 
+      svgY, 
       createdAt: new Date().toISOString()
     });
 
@@ -278,9 +280,45 @@ app.post("/points", async (req, res) => {
   }
 });
 
+// ================================
+// POINTS - UPDATE
+// ================================
+app.patch("/point/:id", async (req, res) => {
+  try {
+    const { id } = req.params; 
+    const { type, desc, svgX, svgY } = req.body;
+
+    const updatedPoint = await Point.findOneAndUpdate(
+      { _id: id }, 
+      { $set: { type, desc, svgX, svgY } },
+      { new: true }
+    );
+
+    if (!updatedPoint) {
+      return res.status(404).json({ ok: false, msg: "Punto no encontrado" });
+    }
+
+    res.json({ ok: true, point: updatedPoint });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+// ================================
+// POINTS - DELETE 
+// ================================
 app.delete("/point/:id", async (req, res) => {
-  await Point.deleteOne({ pointId: req.params.id });
-  res.json({ ok: true });
+  try {
+      const result = await Point.deleteOne({ _id: req.params.id }); 
+
+      if (result.deletedCount === 0) {
+          return res.status(404).json({ ok: false, msg: "Punto no encontrado para eliminar" });
+      }
+
+      res.json({ ok: true, msg: "Punto eliminado correctamente" });
+  } catch (error) {
+      res.status(500).json({ ok: false, msg: error.message });
+  }
 });
 
 // ================================
