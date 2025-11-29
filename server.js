@@ -19,39 +19,41 @@ app.use(express.json());
 // MONGODB
 // ================================
 mongoose.connect(process.env.MONGO_URI)
-  .then(() => console.log("MongoDB conectado"))
-  .catch(err => console.error("Error MongoDB:", err));
+  .then(() => console.log("MongoDB conectado"))
+  .catch(err => console.error("Error MongoDB:", err));
 
 // ================================
 // CLOUDINARY
 // ================================
 cloudinary.config({
-  cloud_name: process.env.CLOUD_NAME,
-  api_key: process.env.CLOUD_KEY,
-  api_secret: process.env.CLOUD_SECRET
+  cloud_name: process.env.CLOUD_NAME,
+  api_key: process.env.CLOUD_KEY,
+  api_secret: process.env.CLOUD_SECRET
 });
 
 const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 3 * 1024 * 1024 }
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 3 * 1024 * 1024 }
 });
 
 // ================================
 // MODELOS
 // ================================
 const UserSchema = new mongoose.Schema({
-  username: String,
-  password: String,
-  role: String,
-  foto: String
+  username: String,
+  password: String,
+  role: String,
+  foto: String
 });
 
 const PointSchema = new mongoose.Schema({
-  pointId: String,
-  user: String,
-  type: String,
-  desc: String,
-  createdAt: String
+  pointId: String,
+  user: String,
+  type: String,
+  desc: String,
+  **svgX: Number,** // <-- CAMPO AÑADIDO
+  **svgY: Number,** // <-- CAMPO AÑADIDO
+  createdAt: String
 });
 
 const User = mongoose.model("User", UserSchema);
@@ -61,178 +63,178 @@ const Point = mongoose.model("Point", PointSchema);
 // CREAR ADMIN SI NO EXISTE
 // ================================
 (async () => {
-  const adminExists = await User.findOne({ username: "admin" });
-  if (!adminExists) {
-    const hashed = await bcrypt.hash("12345", 10);
-    await User.create({
-      username: "admin",
-      password: hashed,
-      role: "admin",
-      foto: ""
-    });
-    console.log("Admin creado (admin / 12345)");
-  }
+  const adminExists = await User.findOne({ username: "admin" });
+  if (!adminExists) {
+    const hashed = await bcrypt.hash("12345", 10);
+    await User.create({
+      username: "admin",
+      password: hashed,
+      role: "admin",
+      foto: ""
+    });
+    console.log("Admin creado (admin / 12345)");
+  }
 })();
 
 // ================================
 // AUTH
 // ================================
 app.post("/register", upload.single("pfp"), async (req, res) => {
-  try {
-    const { username, password } = req.body;
+  try {
+    const { username, password } = req.body;
 
-    if (!username || !password)
-      return res.status(400).json({ ok: false, msg: "Faltan datos" });
+    if (!username || !password)
+      return res.status(400).json({ ok: false, msg: "Faltan datos" });
 
-    const exists = await User.findOne({ username });
-    if (exists)
-      return res.status(400).json({ ok: false, msg: "Usuario ya existe" });
+    const exists = await User.findOne({ username });
+    if (exists)
+      return res.status(400).json({ ok: false, msg: "Usuario ya existe" });
 
-    const hashed = await bcrypt.hash(password, 10);
-    let fotoURL = "";
+    const hashed = await bcrypt.hash(password, 10);
+    let fotoURL = "";
 
-    if (req.file) {
-      const stream = cloudinary.uploader.upload_stream(
-        { folder: "unitymap/pfps" },
-        async (error, result) => {
-          if (error) return res.status(500).json({ ok: false, msg: error.message });
+    if (req.file) {
+      const stream = cloudinary.uploader.upload_stream(
+        { folder: "unitymap/pfps" },
+        async (error, result) => {
+          if (error) return res.status(500).json({ ok: false, msg: error.message });
 
-          fotoURL = result.secure_url;
+          fotoURL = result.secure_url;
 
-          await User.create({
-            username,
-            password: hashed,
-            role: "user",
-            foto: fotoURL
-          });
+          await User.create({
+            username,
+            password: hashed,
+            role: "user",
+            foto: fotoURL
+          });
 
-          return res.json({ ok: true, msg: "Usuario registrado correctamente" });
-        }
-      );
+          return res.json({ ok: true, msg: "Usuario registrado correctamente" });
+        }
+      );
 
-      stream.end(req.file.buffer);
-      return;
-    }
+      stream.end(req.file.buffer);
+      return;
+    }
 
-    await User.create({
-      username,
-      password: hashed,
-      role: "user",
-      foto: ""
-    });
+    await User.create({
+      username,
+      password: hashed,
+      role: "user",
+      foto: ""
+    });
 
-    res.json({ ok: true, msg: "Usuario registrado correctamente" });
+    res.json({ ok: true, msg: "Usuario registrado correctamente" });
 
-  } catch (error) {
-    res.status(500).json({ ok: false, error: error.message });
-  }
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
 });
 
 // Login
 app.post("/login", async (req, res) => {
-  try {
-    const { username, password } = req.body;
+  try {
+    const { username, password } = req.body;
 
-    const user = await User.findOne({ username });
-    if (!user)
-      return res.status(400).json({ ok: false, msg: "Usuario no encontrado" });
+    const user = await User.findOne({ username });
+    if (!user)
+      return res.status(400).json({ ok: false, msg: "Usuario no encontrado" });
 
-    const valid = await bcrypt.compare(password, user.password);
-    if (!valid)
-      return res.status(400).json({ ok: false, msg: "Contraseña incorrecta" });
+    const valid = await bcrypt.compare(password, user.password);
+    if (!valid)
+      return res.status(400).json({ ok: false, msg: "Contraseña incorrecta" });
 
-    res.json({
-      ok: true,
-      usuario: {
-        id: user._id,
-        username: user.username,
-        role: user.role,
-        foto: user.foto || ""
-      }
-    });
-  } catch (error) {
-    res.status(500).json({ ok: false, error: error.message });
-  }
+    res.json({
+      ok: true,
+      usuario: {
+        id: user._id,
+        username: user.username,
+        role: user.role,
+        foto: user.foto || ""
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
 });
 
 // ================================
 // SUBIR FOTO DE PERFIL
 // ================================
 app.post("/upload-foto/:username", upload.single("foto"), async (req, res) => {
-  try {
-    if (!req.file) return res.status(400).json({ ok: false, msg: "No se envió imagen" });
+  try {
+    if (!req.file) return res.status(400).json({ ok: false, msg: "No se envió imagen" });
 
-    const user = await User.findOne({ username: req.params.username });
-    if (!user) return res.status(404).json({ ok: false, msg: "Usuario no existe" });
+    const user = await User.findOne({ username: req.params.username });
+    if (!user) return res.status(404).json({ ok: false, msg: "Usuario no existe" });
 
-    const stream = cloudinary.uploader.upload_stream(
-      { folder: "unitymap/pfps", public_id: `pfp_${req.params.username}` },
-      async (error, result) => {
-        if (error) return res.status(500).json({ ok: false, msg: error.message });
+    const stream = cloudinary.uploader.upload_stream(
+      { folder: "unitymap/pfps", public_id: `pfp_${req.params.username}` },
+      async (error, result) => {
+        if (error) return res.status(500).json({ ok: false, msg: error.message });
 
-        user.foto = result.secure_url;
-        await user.save();
+        user.foto = result.secure_url;
+        await user.save();
 
-        res.json({ ok: true, foto: result.secure_url });
-      }
-    );
+        res.json({ ok: true, foto: result.secure_url });
+      }
+    );
 
-    stream.end(req.file.buffer); // pasa el buffer de memoria
-  } catch (error) {
-    res.status(500).json({ ok: false, error: error.message });
-  }
+    stream.end(req.file.buffer); // pasa el buffer de memoria
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
 });
 
 // ================================
 // USERS (ADMIN)
 // ================================
 app.get("/users", async (req, res) => {
-  const users = await User.find({}, { password: 0 });
-  res.json({ ok: true, users });
+  const users = await User.find({}, { password: 0 });
+  res.json({ ok: true, users });
 });
 
 // ================================
 // ADMIN - ELIMINAR USUARIO
 // ================================
 app.delete("/user/:username", async (req, res) => {
-  try {
-    const { username } = req.params;
-    if (username === "admin") {
-      return res.status(403).json({ ok: false, msg: "No puedes borrar al admin" });
-    }
+  try {
+    const { username } = req.params;
+    if (username === "admin") {
+      return res.status(403).json({ ok: false, msg: "No puedes borrar al admin" });
+    }
 
-    await User.deleteOne({ username });
-    await Point.deleteMany({ user: username });
+    await User.deleteOne({ username });
+    await Point.deleteMany({ user: username });
 
-    res.json({ ok: true, msg: "Usuario eliminado" });
-  } catch (err) {
-    res.status(500).json({ ok: false, msg: err.message });
-  }
+    res.json({ ok: true, msg: "Usuario eliminado" });
+  } catch (err) {
+    res.status(500).json({ ok: false, msg: err.message });
+  }
 });
 
 // ================================
 // ADMIN - CAMBIAR ROL
 // ================================
 app.patch("/user/:username/role", async (req, res) => {
-  try {
-    const { role } = req.body;
-    await User.updateOne({ username: req.params.username }, { role });
-    res.json({ ok: true, msg: "Rol actualizado" });
-  } catch (err) {
-    res.status(500).json({ ok: false, msg: err.message });
-  }
+  try {
+    const { role } = req.body;
+    await User.updateOne({ username: req.params.username }, { role });
+    res.json({ ok: true, msg: "Rol actualizado" });
+  } catch (err) {
+    res.status(500).json({ ok: false, msg: err.message });
+  }
 });
 
 // ================================
 // ADMIN - BORRAR TODOS LOS PUNTOS
 // ================================
 app.delete("/points", async (req, res) => {
-  try {
-    await Point.deleteMany({});
-    res.json({ ok: true, msg: "Todos los puntos eliminados" });
-  } catch (err) {
-    res.status(500).json({ ok: false, msg: err.message });
-  }
+  try {
+    await Point.deleteMany({});
+    res.json({ ok: true, msg: "Todos los puntos eliminados" });
+  } catch (err) {
+    res.status(500).json({ ok: false, msg: err.message });
+  }
 });
 
 
@@ -241,63 +243,56 @@ app.delete("/points", async (req, res) => {
 // ================================
 
 app.get("/points", async (req, res) => {
-  try {
-    const points = await Point.find();
-    const pointsWithPfp = await Promise.all(points.map(async (p) => {
-      const usr = await User.findOne({ username: p.user });
-      return {
-        ...p._doc,
-        pfp: usr?.foto || ""  // añade la foto del usuario
-      };
-    }));
-    res.json({ ok: true, points: pointsWithPfp });
-  } catch (err) {
-    res.status(500).json({ ok: false, msg: err.message });
-  }
+  try {
+    const points = await Point.find();
+    const pointsWithPfp = await Promise.all(points.map(async (p) => {
+      const usr = await User.findOne({ username: p.user });
+      return {
+        ...p._doc,
+        pfp: usr?.foto || ""  // añade la foto del usuario
+      };
+    }));
+    res.json({ ok: true, points: pointsWithPfp });
+  } catch (err) {
+    res.status(500).json({ ok: false, msg: err.message });
+  }
 });
 
 app.post("/points", async (req, res) => {
-  try {
-    const { user, type, desc } = req.body;
+  try {
+    const { user, type, desc, **svgX, svgY** } = req.body; // <-- RECIBE LAS COORDENADAS
 
-    const newPoint = await Point.create({
-      pointId: uuidv4(),
-      user,
-      type,
-      desc,
-      createdAt: new Date().toISOString()
-    });
+    const newPoint = await Point.create({
+      pointId: uuidv4(),
+      user,
+      type,
+      desc,
+      **svgX,** // <-- GUARDA LA COORDENADA X
+      **svgY,** // <-- GUARDA LA COORDENADA Y
+      createdAt: new Date().toISOString()
+    });
 
-    res.json({ ok: true, point: newPoint });
-  } catch (error) {
-    res.status(500).json({ ok: false, error: error.message });
-  }
+    res.json({ ok: true, point: newPoint });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
 });
 
 app.delete("/point/:id", async (req, res) => {
-  await Point.deleteOne({ pointId: req.params.id });
-  res.json({ ok: true });
+  await Point.deleteOne({ pointId: req.params.id });
+  res.json({ ok: true });
 });
 
 // ================================
 // ROOT
 // ================================
 app.get("/", (req, res) => {
-  res.send("UnityMap Backend funcionando");
+  res.send("UnityMap Backend funcionando");
 });
 
 // ================================
 // SERVIDOR
 // ================================
 app.listen(PORT, () => {
-  console.log(`Servidor corriendo en puerto ${PORT}`);
+  console.log(`Servidor corriendo en puerto ${PORT}`);
 });
-
-
-
-
-
-
-
-
-
