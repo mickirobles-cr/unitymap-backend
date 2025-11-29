@@ -32,7 +32,8 @@ cloudinary.config({
 });
 
 const upload = multer({
-  limits: { fileSize: 3 * 1024 * 1024 }, // 3MB
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 3 * 1024 * 1024 }
 });
 
 // ================================
@@ -88,19 +89,36 @@ app.post("/register", upload.single("pfp"), async (req, res) => {
       return res.status(400).json({ ok: false, msg: "Usuario ya existe" });
 
     const hashed = await bcrypt.hash(password, 10);
-
     let fotoURL = "";
 
     if (req.file) {
-      const result = await cloudinary.uploader.upload(req.file.path);
-      fotoURL = result.secure_url;
+      const stream = cloudinary.uploader.upload_stream(
+        { folder: "unitymap/pfps" },
+        async (error, result) => {
+          if (error) return res.status(500).json({ ok: false, msg: error.message });
+
+          fotoURL = result.secure_url;
+
+          await User.create({
+            username,
+            password: hashed,
+            role: "user",
+            foto: fotoURL
+          });
+
+          return res.json({ ok: true, msg: "Usuario registrado correctamente" });
+        }
+      );
+
+      stream.end(req.file.buffer);
+      return;
     }
 
     await User.create({
       username,
       password: hashed,
       role: "user",
-      foto: fotoURL
+      foto: ""
     });
 
     res.json({ ok: true, msg: "Usuario registrado correctamente" });
@@ -109,7 +127,6 @@ app.post("/register", upload.single("pfp"), async (req, res) => {
     res.status(500).json({ ok: false, error: error.message });
   }
 });
-
 
 // Login
 app.post("/login", async (req, res) => {
@@ -260,6 +277,7 @@ app.get("/", (req, res) => {
 app.listen(PORT, () => {
   console.log(`Servidor corriendo en puerto ${PORT}`);
 });
+
 
 
 
