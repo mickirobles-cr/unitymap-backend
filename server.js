@@ -5,7 +5,9 @@ import { v4 as uuidv4 } from "uuid";
 import mongoose from "mongoose";
 import multer from "multer";
 import { v2 as cloudinary } from "cloudinary";
+import { OAuth2Client } from "google-auth-library";
 
+const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -43,7 +45,8 @@ const UserSchema = new mongoose.Schema({
   username: String,
   password: String,
   role: String,
-  foto: String
+  foto: String,
+  googleId: String
 });
 
 const PointSchema = new mongoose.Schema({
@@ -159,7 +162,7 @@ app.post("/login", async (req, res) => {
 
 app.post("/login-google", async (req, res) => {
   try {
-    const { idToken } = req.body;
+    const { token } = req.body;
     const ticket = await client.verifyIdToken({
       idToken,
       audience: process.env.GOOGLE_CLIENT_ID
@@ -190,6 +193,100 @@ app.post("/login-google", async (req, res) => {
 
   } catch (error) {
     res.status(500).json({ ok: false, msg: error.message });
+  }
+});
+
+app.post("/auth/google", async (req, res) => {
+  try {
+    const { token } = req.body;
+
+    const ticket = await client.verifyIdToken({
+      idToken: token,
+      audience: process.env.GOOGLE_CLIENT_ID
+    });
+
+    const payload = ticket.getPayload();
+    const email = payload.email;
+    const googleFoto = payload.picture;
+
+    let user = await User.findOne({ username: email });
+
+    // USUARIO NUEVO → el frontend pedirá username + foto
+    if (!user) {
+      return res.json({
+        ok: true,
+        usuario: {
+          googleId: email
+        }
+      });
+    }
+
+    // USUARIO EXISTENTE
+    res.json({
+      ok: true,
+      usuario: {
+        id: user._id,
+        username: user.username,
+        role: user.role,
+        foto: user.foto || googleFoto
+      }
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ ok: false, msg: err.message });
+  }
+});
+
+app.post("/auth/google-register", upload.single("pfp"), async (req, res) => {
+  try {
+    const { username, googleId } = req.body;
+
+    if (!username || !googleId)
+      return res.status(400).json({ ok: false, msg: "Datos incompletos" });
+
+    const exists = await User.findOne({ username });
+    if (exists)
+      return res.status(400).json({ ok: false, msg: "Usuario ya existe" });
+
+    let fotoURL = "";
+
+    if (req.file) {
+      const stream = cloudinary.uploader.upload_stream(
+        { folder: "unitymap/pfps" },
+        async (error, result) => {
+          if (error)
+            return res.status(500).json({ ok: false, msg: error.message });
+
+          fotoURL = result.secure_url;
+
+          const user = await User.create({
+            username,
+            password: "", // Google NO usa password
+            role: "user",
+            foto: fotoURL
+          });
+
+          return res.json({ ok: true, usuario: user });
+        }
+      );
+
+      stream.end(req.file.buffer);
+      return;
+    }
+
+    const user = await User.create({
+      username,
+      password: "",
+      role: "user",
+      foto: ""
+    });
+
+    res.json({ ok: true, usuario: user });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ ok: false, msg: err.message });
   }
 });
 
@@ -370,4 +467,5 @@ app.get("/", (req, res) => {
 app.listen(PORT, () => {
   console.log(`Servidor corriendo en puerto ${PORT}`);
 });
+
 
