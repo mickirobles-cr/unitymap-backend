@@ -157,6 +157,42 @@ app.post("/login", async (req, res) => {
   }
 });
 
+app.post("/login-google", async (req, res) => {
+  try {
+    const { idToken } = req.body;
+    const ticket = await client.verifyIdToken({
+      idToken,
+      audience: process.env.GOOGLE_CLIENT_ID
+    });
+
+    const payload = ticket.getPayload();
+    const email = payload.email;
+    const googleFoto = payload.picture;
+
+    let user = await User.findOne({ username: email });
+
+    if (!user) {
+      // Usuario nuevo → frontend debe mostrar formulario adicional
+      return res.json({ ok: true, newUser: true, email, googleFoto });
+    }
+
+    // Usuario existente → login normal
+    res.json({
+      ok: true,
+      newUser: false,
+      usuario: {
+        id: user._id,
+        username: user.username,
+        role: user.role,
+        foto: user.foto || googleFoto
+      }
+    });
+
+  } catch (error) {
+    res.status(500).json({ ok: false, msg: error.message });
+  }
+});
+
 // ================================
 // SUBIR FOTO DE PERFIL
 // ================================
@@ -334,3 +370,4 @@ app.get("/", (req, res) => {
 app.listen(PORT, () => {
   console.log(`Servidor corriendo en puerto ${PORT}`);
 });
+
