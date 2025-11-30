@@ -133,6 +133,7 @@ app.post("/login", async (req, res) => {
 app.post("/login-google", async (req, res) => {
   try {
     const { token } = req.body;
+
     const ticket = await client.verifyIdToken({
       idToken: token,
       audience: process.env.GOOGLE_CLIENT_ID
@@ -142,20 +143,20 @@ app.post("/login-google", async (req, res) => {
     const email = payload.email;
     const googleFoto = payload.picture;
 
-    let user = await User.findOne({ googleId: email });
+    let user = await User.findOne({ username: email });
 
     if (!user) {
       return res.json({
         ok: true,
-        usuario: {
-          googleId: email,
-          foto: googleFoto
-        }
+        newUser: true,
+        email,
+        googleFoto
       });
     }
 
     res.json({
       ok: true,
+      newUser: false,
       usuario: {
         id: user._id,
         username: user.username,
@@ -163,8 +164,9 @@ app.post("/login-google", async (req, res) => {
         foto: user.foto || googleFoto
       }
     });
+
   } catch (error) {
-    console.error(error);
+    console.error("LOGIN GOOGLE ERROR:", error);
     res.status(500).json({ ok: false, msg: error.message });
   }
 });
@@ -345,3 +347,4 @@ app.get("/", (req, res) => {
 app.listen(PORT, () => {
   console.log(`Servidor corriendo en puerto ${PORT}`);
 });
+
