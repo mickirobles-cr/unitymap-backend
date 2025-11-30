@@ -5,14 +5,17 @@ import { v4 as uuidv4 } from "uuid";
 import mongoose from "mongoose";
 import multer from "multer";
 import { v2 as cloudinary } from "cloudinary";
-import { OAuth2Client } from "google-auth-library";
+import admin from "firebase-admin";
 
-const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(express.json());
+
+admin.initializeApp({
+  credential: admin.credential.cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT))
+});
 
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log("MongoDB conectado"))
@@ -60,14 +63,119 @@ const Point = mongoose.model("Point", PointSchema);
       role: "admin",
       foto: ""
     });
-    console.log("Admin creado (admin / 12345)");
   }
 })();
+
+app.post("/login-google", async (req, res) => {
+  try {
+    const { token } = req.body;
+
+    const decoded = await admin.auth().verifyIdToken(token);
+
+    const googleId = decoded.uid;
+    const email = decoded.email;
+    const googleFoto = decoded.picture || "";
+
+    let user = await User.findOne({ googleId });
+
+    if (!user) {
+      return res.json({
+        ok: true,
+        usuario: {
+          googleId,
+          email,
+          foto: googleFoto,
+          username: null
+        }
+      });
+    }
+
+    res.json({
+      ok: true,
+      usuario: {
+        id: user._id,
+        username: user.username,
+        role: user.role,
+        foto: user.foto || googleFoto,
+        googleId: user.googleId
+      }
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(401).json({ ok: false, msg: "Token inválido" });
+  }
+});
+
+app.post("/auth/google-register", upload.single("pfp"), async (req, res) => {
+  try {
+    const { username, googleId } = req.body;
+    if (!username || !googleId) return res.status(400).json({ ok: false, msg: "Datos incompletos" });
+
+    const exists = await User.findOne({ username });
+    if (exists) return res.status(400).json({ ok: false, msg: "Usuario ya existe" });
+
+    let fotoURL = "";
+
+    if (req.file) {
+      const stream = cloudinary.uploader.upload_stream(
+        { folder: "unitymap/pfps" },
+        async (error, result) => {
+          if (error) return res.status(500).json({ ok: false, msg: error.message });
+
+          fotoURL = result.secure_url;
+
+          const user = await User.create({
+            username,
+            googleId,
+            role: "user",
+            password: "",
+            foto: fotoURL
+          });
+
+          return res.json({
+            ok: true,
+            usuario: {
+              id: user._id,
+              username: user.username,
+              role: user.role,
+              foto: user.foto,
+              googleId: user.googleId
+            }
+          });
+        }
+      );
+      stream.end(req.file.buffer);
+      return;
+    }
+
+    const user = await User.create({
+      username,
+      googleId,
+      role: "user",
+      password: "",
+      foto: ""
+    });
+
+    res.json({
+      ok: true,
+      usuario: {
+        id: user._id,
+        username: user.username,
+        role: user.role,
+        foto: user.foto,
+        googleId: user.googleId
+      }
+    });
+
+  } catch (err) {
+    res.status(500).json({ ok: false, msg: err.message });
+  }
+});
 
 app.post("/register", upload.single("pfp"), async (req, res) => {
   try {
     const { username, password } = req.body;
-    if (!username || !password) return res.status(400).json({ ok: false, msg: "Faltan datos" });
 
     const exists = await User.findOne({ username });
     if (exists) return res.status(400).json({ ok: false, msg: "Usuario ya existe" });
@@ -80,14 +188,17 @@ app.post("/register", upload.single("pfp"), async (req, res) => {
         { folder: "unitymap/pfps" },
         async (error, result) => {
           if (error) return res.status(500).json({ ok: false, msg: error.message });
+
           fotoURL = result.secure_url;
+
           const user = await User.create({
             username,
             password: hashed,
             role: "user",
             foto: fotoURL
           });
-          return res.json({ ok: true, msg: "Usuario registrado correctamente", usuario: { id: user._id, username: user.username, role: user.role, foto: user.foto } });
+
+          return res.json({ ok: true, usuario: user });
         }
       );
       stream.end(req.file.buffer);
@@ -101,243 +212,43 @@ app.post("/register", upload.single("pfp"), async (req, res) => {
       foto: ""
     });
 
-    res.json({ ok: true, msg: "Usuario registrado correctamente", usuario: { id: user._id, username: user.username, role: user.role, foto: user.foto } });
-  } catch (error) {
-    res.status(500).json({ ok: false, error: error.message });
+    res.json({ ok: true, usuario: user });
+
+  } catch (err) {
+    res.status(500).json({ ok: false, msg: err.message });
   }
 });
 
 app.post("/login", async (req, res) => {
-  try {
-    const { username, password } = req.body;
-    const user = await User.findOne({ username });
-    if (!user) return res.status(400).json({ ok: false, msg: "Usuario no encontrado" });
+  const { username, password } = req.body;
+  const user = await User.findOne({ username });
+  if (!user) return res.json({ ok: false });
 
-    const valid = await bcrypt.compare(password, user.password);
-    if (!valid) return res.status(400).json({ ok: false, msg: "Contraseña incorrecta" });
+  const valid = await bcrypt.compare(password, user.password);
+  if (!valid) return res.json({ ok: false });
 
-    res.json({
-      ok: true,
-      usuario: {
-        id: user._id,
-        username: user.username,
-        role: user.role,
-        foto: user.foto || ""
-      }
-    });
-  } catch (error) {
-    res.status(500).json({ ok: false, error: error.message });
-  }
-});
-
-app.post("/login-google", async (req, res) => {
-  try {
-    const { token } = req.body;
-
-    const ticket = await client.verifyIdToken({
-      idToken: token,
-      audience: process.env.GOOGLE_CLIENT_ID
-    });
-
-    const payload = ticket.getPayload();
-    const email = payload.email;
-    const googleFoto = payload.picture;
-
-    let user = await User.findOne({ username: email });
-
-    if (!user) {
-      return res.json({
-        ok: true,
-        newUser: true,
-        email,
-        googleFoto
-      });
-    }
-
-    res.json({
-      ok: true,
-      newUser: false,
-      usuario: {
-        id: user._id,
-        username: user.username,
-        role: user.role,
-        foto: user.foto || googleFoto
-      }
-    });
-
-  } catch (error) {
-    console.error("LOGIN GOOGLE ERROR:", error);
-    res.status(500).json({ ok: false, msg: error.message });
-  }
-});
-
-app.post("/auth/google-register", upload.single("pfp"), async (req, res) => {
-  try {
-    const { username, googleId } = req.body;
-    if (!username || !googleId) return res.status(400).json({ ok: false, msg: "Datos incompletos" });
-
-    const exists = await User.findOne({ username });
-    if (exists) return res.status(400).json({ ok: false, msg: "Usuario ya existe" });
-
-    let fotoURL = "";
-    if (req.file) {
-      const stream = cloudinary.uploader.upload_stream(
-        { folder: "unitymap/pfps" },
-        async (error, result) => {
-          if (error) return res.status(500).json({ ok: false, msg: error.message });
-
-          fotoURL = result.secure_url;
-          const user = await User.create({
-            username,
-            googleId,
-            password: "",
-            role: "user",
-            foto: fotoURL
-          });
-
-          return res.json({ ok: true, usuario: { id: user._id, username: user.username, role: user.role, foto: user.foto, googleId: user.googleId } });
-        }
-      );
-      stream.end(req.file.buffer);
-      return;
-    }
-
-    const user = await User.create({
-      username,
-      googleId,
-      password: "",
-      role: "user",
-      foto: ""
-    });
-
-    res.json({ ok: true, usuario: { id: user._id, username: user.username, role: user.role, foto: user.foto, googleId: user.googleId } });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ ok: false, msg: err.message });
-  }
-});
-
-app.post("/upload-foto/:username", upload.single("foto"), async (req, res) => {
-  try {
-    if (!req.file) return res.status(400).json({ ok: false, msg: "No se envió imagen" });
-
-    const user = await User.findOne({ username: req.params.username });
-    if (!user) return res.status(404).json({ ok: false, msg: "Usuario no existe" });
-
-    const stream = cloudinary.uploader.upload_stream(
-      { folder: "unitymap/pfps", public_id: `pfp_${req.params.username}` },
-      async (error, result) => {
-        if (error) return res.status(500).json({ ok: false, msg: error.message });
-
-        user.foto = result.secure_url;
-        await user.save();
-
-        res.json({ ok: true, foto: result.secure_url });
-      }
-    );
-
-    stream.end(req.file.buffer);
-  } catch (error) {
-    res.status(500).json({ ok: false, error: error.message });
-  }
-});
-
-app.get("/users", async (req, res) => {
-  const users = await User.find({}, { password: 0 });
-  res.json({ ok: true, users });
-});
-
-app.delete("/user/:username", async (req, res) => {
-  try {
-    const { username } = req.params;
-    if (username === "admin") return res.status(403).json({ ok: false, msg: "No puedes borrar al admin" });
-
-    await User.deleteOne({ username });
-    await Point.deleteMany({ user: username });
-
-    res.json({ ok: true, msg: "Usuario eliminado" });
-  } catch (err) {
-    res.status(500).json({ ok: false, msg: err.message });
-  }
-});
-
-app.patch("/user/:username/role", async (req, res) => {
-  try {
-    const { role } = req.body;
-    await User.updateOne({ username: req.params.username }, { role });
-    res.json({ ok: true, msg: "Rol actualizado" });
-  } catch (err) {
-    res.status(500).json({ ok: false, msg: err.message });
-  }
-});
-
-app.delete("/points", async (req, res) => {
-  try {
-    await Point.deleteMany({});
-    res.json({ ok: true, msg: "Todos los puntos eliminados" });
-  } catch (err) {
-    res.status(500).json({ ok: false, msg: err.message });
-  }
-});
-
-app.get("/points", async (req, res) => {
-  try {
-    const points = await Point.find();
-    const pointsWithPfp = await Promise.all(points.map(async (p) => {
-      const usr = await User.findOne({ username: p.user });
-      return {
-        ...p._doc,
-        pfp: usr?.foto || ""
-      };
-    }));
-    res.json({ ok: true, points: pointsWithPfp });
-  } catch (err) {
-    res.status(500).json({ ok: false, msg: err.message });
-  }
+  res.json({ ok: true, usuario: user });
 });
 
 app.post("/points", async (req, res) => {
-  try {
-    const { user, type, desc, svgX, svgY } = req.body;
-    const newPoint = await Point.create({
-      pointId: uuidv4(),
-      user,
-      type,
-      desc,
-      svgX,
-      svgY,
-      createdAt: new Date().toISOString()
-    });
-    res.json({ ok: true, point: newPoint });
-  } catch (error) {
-    res.status(500).json({ ok: false, error: error.message });
-  }
+  const { user, type, desc, svgX, svgY } = req.body;
+
+  const newPoint = await Point.create({
+    pointId: uuidv4(),
+    user,
+    type,
+    desc,
+    svgX,
+    svgY,
+    createdAt: new Date().toISOString()
+  });
+
+  res.json({ ok: true, point: newPoint });
 });
 
-app.patch("/point/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { type, desc, svgX, svgY } = req.body;
-    const updatedPoint = await Point.findOneAndUpdate(
-      { _id: id },
-      { $set: { type, desc, svgX, svgY } },
-      { new: true }
-    );
-    if (!updatedPoint) return res.status(404).json({ ok: false, msg: "Punto no encontrado" });
-    res.json({ ok: true, point: updatedPoint });
-  } catch (error) {
-    res.status(500).json({ ok: false, error: error.message });
-  }
-});
-
-app.delete("/point/:id", async (req, res) => {
-  try {
-    const result = await Point.deleteOne({ _id: req.params.id });
-    if (result.deletedCount === 0) return res.status(404).json({ ok: false, msg: "Punto no encontrado para eliminar" });
-    res.json({ ok: true, msg: "Punto eliminado correctamente" });
-  } catch (error) {
-    res.status(500).json({ ok: false, msg: error.message });
-  }
+app.get("/points", async (req, res) => {
+  const points = await Point.find();
+  res.json({ ok: true, points });
 });
 
 app.get("/", (req, res) => {
@@ -347,4 +258,3 @@ app.get("/", (req, res) => {
 app.listen(PORT, () => {
   console.log(`Servidor corriendo en puerto ${PORT}`);
 });
-
