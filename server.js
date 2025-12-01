@@ -132,6 +132,48 @@ app.post("/login", async (req,res)=>{
   res.json({ ok:true, usuario:user, token });
 });
 
+// LOGIN GOOGLE
+app.post("/login-google", async (req, res) => {
+  const { token } = req.body;
+  if (!token) return res.status(400).json({ ok:false, msg:"Token de Google faltante" });
+
+  try {
+    const ticket = await googleClient.verifyIdToken({
+      idToken: token,
+      audience: process.env.GOOGLE_CLIENT_ID
+    });
+    const payload = ticket.getPayload();
+    let user = await User.findOne({ googleId: payload.sub });
+
+    if (!user) {
+      return res.json({ ok:true, newUser:true, googleId: payload.sub, foto: payload.picture });
+    }
+
+    const jwtToken = jwt.sign({ id:user._id, role:user.role }, JWT_SECRET, { expiresIn:"12h" });
+    res.json({ ok:true, usuario:user, token: jwtToken });
+  } catch (err) {
+    res.status(500).json({ ok:false, msg: err.message });
+  }
+});
+
+// REGISTRO GOOGLE
+app.post("/auth/google-register", upload.single("pfp"), async (req,res)=>{
+  try{
+    const { username, googleId } = req.body;
+    if(!username || !googleId) return res.status(400).json({ ok:false, msg:"Datos incompletos" });
+    if(await User.findOne({ username })) return res.status(400).json({ ok:false, msg:"Usuario ya existe" });
+
+    let fotoURL = req.file ? (await cloudinary.uploader.upload_stream({ folder:"unitymap/pfps" }, (err,r)=>err?null:r))?.secure_url || "" : "";
+
+    const user = await User.create({ username, role:"user", googleId, foto: fotoURL });
+    const token = jwt.sign({ id:user._id, role:user.role }, JWT_SECRET, { expiresIn:"12h" });
+
+    res.json({ ok:true, usuario:user, token });
+  }catch(err){
+    res.status(500).json({ ok:false, msg: err.message });
+  }
+});
+
 /* ============================
    REGISTER NORMAL
 ============================ */
@@ -274,3 +316,4 @@ app.get("/", (req,res)=>res.send("UnityMap Backend funcionando"));
    START
 ============================ */
 app.listen(PORT,()=>console.log(`Servidor corriendo en puerto ${PORT}`));
+
