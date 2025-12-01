@@ -21,7 +21,6 @@ app.use(express.json());
 if (!process.env.GOOGLE_CLIENT_ID) {
   throw new Error("GOOGLE_CLIENT_ID no está definido en Render");
 }
-
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 /* ============================
@@ -60,7 +59,6 @@ const UserSchema = new mongoose.Schema({
 });
 
 const PointSchema = new mongoose.Schema({
-  pointId: String,
   user: String,
   type: String,
   desc: String,
@@ -79,12 +77,7 @@ const Point = mongoose.model("Point", PointSchema);
   const adminExists = await User.findOne({ username: "admin" });
   if (!adminExists) {
     const hashed = await bcrypt.hash("12345", 10);
-    await User.create({
-      username: "admin",
-      password: hashed,
-      role: "admin",
-      foto: ""
-    });
+    await User.create({ username: "admin", password: hashed, role: "admin", foto: "" });
     console.log("Admin creado");
   }
 })();
@@ -132,7 +125,9 @@ app.post("/login", async (req,res)=>{
   res.json({ ok:true, usuario:user, token });
 });
 
-// LOGIN GOOGLE
+/* ============================
+   LOGIN GOOGLE
+============================ */
 app.post("/login-google", async (req, res) => {
   const { token } = req.body;
   if (!token) return res.status(400).json({ ok:false, msg:"Token de Google faltante" });
@@ -156,14 +151,23 @@ app.post("/login-google", async (req, res) => {
   }
 });
 
-// REGISTRO GOOGLE
+/* ============================
+   REGISTER GOOGLE
+============================ */
 app.post("/auth/google-register", upload.single("pfp"), async (req,res)=>{
   try{
     const { username, googleId } = req.body;
     if(!username || !googleId) return res.status(400).json({ ok:false, msg:"Datos incompletos" });
     if(await User.findOne({ username })) return res.status(400).json({ ok:false, msg:"Usuario ya existe" });
 
-    let fotoURL = req.file ? (await cloudinary.uploader.upload_stream({ folder:"unitymap/pfps" }, (err,r)=>err?null:r))?.secure_url || "" : "";
+    let fotoURL = "";
+    if(req.file){
+      const result = await new Promise((resolve,reject)=>{
+        const stream = cloudinary.uploader.upload_stream({ folder:"unitymap/pfps" }, (err,r)=>err?reject(err):resolve(r));
+        stream.end(req.file.buffer);
+      });
+      fotoURL = result.secure_url;
+    }
 
     const user = await User.create({ username, role:"user", googleId, foto: fotoURL });
     const token = jwt.sign({ id:user._id, role:user.role }, JWT_SECRET, { expiresIn:"12h" });
@@ -258,7 +262,6 @@ app.post("/points", authenticateJWT, async (req,res)=>{
 
   try{
     const newPoint = await Point.create({
-      pointId: uuidv4(),
       user:req.user.username,
       type,
       desc,
@@ -281,6 +284,29 @@ app.get("/points", authenticateJWT, async (req,res)=>{
   }
 });
 
+app.patch("/point/:id", authenticateJWT, async (req,res)=>{
+  const { id } = req.params;
+  const { type, desc, svgX, svgY } = req.body;
+  if(!validateId(id)) return res.status(400).json({ ok:false, msg:"ID inválido" });
+
+  try{
+    const point = await Point.findById(id);
+    if(!point) return res.status(404).json({ ok:false, msg:"Punto no encontrado" });
+    if(point.user !== req.user.username && req.user.role !== "admin")
+      return res.status(403).json({ ok:false, msg:"No tienes permiso" });
+
+    point.type = type;
+    point.desc = desc;
+    point.svgX = svgX;
+    point.svgY = svgY;
+    await point.save();
+
+    res.json({ ok:true, point });
+  }catch(err){
+    res.status(500).json({ ok:false, msg: err.message });
+  }
+});
+
 app.delete("/point/:id", authenticateJWT, async (req,res)=>{
   const { id } = req.params;
   if(!validateId(id)) return res.status(400).json({ ok:false, msg:"ID inválido" });
@@ -288,7 +314,7 @@ app.delete("/point/:id", authenticateJWT, async (req,res)=>{
   try{
     const point = await Point.findById(id);
     if(!point) return res.status(404).json({ ok:false, msg:"Punto no encontrado" });
-    if(point.user !== req.user.username && req.user.role !== "admin") 
+    if(point.user !== req.user.username && req.user.role !== "admin")
       return res.status(403).json({ ok:false, msg:"No tienes permiso" });
 
     await Point.findByIdAndDelete(id);
@@ -308,6 +334,30 @@ app.delete("/points", authenticateJWT, isAdmin, async (req,res)=>{
 });
 
 /* ============================
+   UPLOAD FOTO
+============================ */
+app.post("/upload-foto/:username", authenticateJWT, upload.single("pfp"), async (req,res)=>{
+  if(req.user.username !== req.params.username && req.user.role!=="admin")
+    return res.status(403).json({ ok:false, msg:"No tienes permiso" });
+
+  if(!req.file) return res.status(400).json({ ok:false, msg:"Archivo faltante" });
+
+  try{
+    const result = await new Promise((resolve,reject)=>{
+      const stream = cloudinary.uploader.upload_stream({ folder:"unitymap/pfps" }, (err,r)=>err?reject(err):resolve(r));
+      stream.end(req.file.buffer);
+    });
+
+    req.user.foto = result.secure_url;
+    await req.user.save();
+
+    res.json({ ok:true, url: result.secure_url });
+  }catch(err){
+    res.status(500).json({ ok:false, msg: err.message });
+  }
+});
+
+/* ============================
    ROOT
 ============================ */
 app.get("/", (req,res)=>res.send("UnityMap Backend funcionando"));
@@ -316,4 +366,3 @@ app.get("/", (req,res)=>res.send("UnityMap Backend funcionando"));
    START
 ============================ */
 app.listen(PORT,()=>console.log(`Servidor corriendo en puerto ${PORT}`));
-
