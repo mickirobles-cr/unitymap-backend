@@ -151,37 +151,17 @@ app.post("/auth/google-register", upload.single("pfp"), async (req, res) => {
 
     let fotoURL = "";
 
+    // Subida a Cloudinary si hay foto
     if (req.file) {
-      const stream = cloudinary.uploader.upload_stream(
-        { folder: "unitymap/pfps" },
-        async (error, result) => {
-          if (error) return res.status(500).json({ ok: false, msg: error.message });
+      const result = await new Promise((resolve, reject) => {
+        const stream = cloudinary.uploader.upload_stream(
+          { folder: "unitymap/pfps" },
+          (error, result) => error ? reject(error) : resolve(result)
+        );
+        stream.end(req.file.buffer);
+      });
 
-          fotoURL = result.secure_url;
-
-          const user = await User.create({
-            username,
-            googleId,
-            role: "user",
-            password: "",
-            foto: fotoURL
-          });
-
-          return res.json({
-            ok: true,
-            usuario: {
-              id: user._id,
-              username: user.username,
-              role: user.role,
-              foto: user.foto,
-              googleId: user.googleId
-            }
-          });
-        }
-      );
-
-      stream.end(req.file.buffer);
-      return;
+      fotoURL = result.secure_url;
     }
 
     const user = await User.create({
@@ -189,9 +169,10 @@ app.post("/auth/google-register", upload.single("pfp"), async (req, res) => {
       googleId,
       role: "user",
       password: "",
-      foto: ""
+      foto: fotoURL
     });
 
+    // Siempre devuelve la misma estructura
     res.json({
       ok: true,
       usuario: {
@@ -208,50 +189,54 @@ app.post("/auth/google-register", upload.single("pfp"), async (req, res) => {
   }
 });
 
+
 /* ============================
    REGISTER NORMAL
 ============================ */
-app.post("/register", upload.single("pfp"), async (req, res) => {
+app.post("/auth/register", upload.single("pfp"), async (req, res) => {
   try {
     const { username, password } = req.body;
+    if (!username || !password) {
+      return res.status(400).json({ ok: false, msg: "Datos incompletos" });
+    }
 
     const exists = await User.findOne({ username });
-    if (exists) return res.status(400).json({ ok: false, msg: "Usuario ya existe" });
+    if (exists) {
+      return res.status(400).json({ ok: false, msg: "Usuario ya existe" });
+    }
 
     const hashed = await bcrypt.hash(password, 10);
     let fotoURL = "";
 
     if (req.file) {
-      const stream = cloudinary.uploader.upload_stream(
-        { folder: "unitymap/pfps" },
-        async (error, result) => {
-          if (error) return res.status(500).json({ ok: false, msg: error.message });
+      const result = await new Promise((resolve, reject) => {
+        const stream = cloudinary.uploader.upload_stream(
+          { folder: "unitymap/pfps" },
+          (error, result) => error ? reject(error) : resolve(result)
+        );
+        stream.end(req.file.buffer);
+      });
 
-          fotoURL = result.secure_url;
-
-          const user = await User.create({
-            username,
-            password: hashed,
-            role: "user",
-            foto: fotoURL
-          });
-
-          return res.json({ ok: true, usuario: user });
-        }
-      );
-
-      stream.end(req.file.buffer);
-      return;
+      fotoURL = result.secure_url;
     }
 
     const user = await User.create({
       username,
       password: hashed,
       role: "user",
-      foto: ""
+      foto: fotoURL
     });
 
-    res.json({ ok: true, usuario: user });
+    res.json({
+      ok: true,
+      usuario: {
+        id: user._id,
+        username: user.username,
+        role: user.role,
+        foto: user.foto,
+        googleId: user.googleId || null
+      }
+    });
 
   } catch (err) {
     res.status(500).json({ ok: false, msg: err.message });
@@ -310,3 +295,4 @@ app.get("/", (req, res) => {
 app.listen(PORT, () => {
   console.log(`Servidor corriendo en puerto ${PORT}`);
 });
+
