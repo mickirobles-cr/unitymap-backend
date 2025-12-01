@@ -263,14 +263,16 @@ app.post("/points", authenticateJWT, async (req,res)=>{
 
   try{
     const newPoint = await Point.create({
-      user:req.user.username,
-      type,
-      desc,
-      svgX,
-      svgY,
-      foto,
-      createdAt: new Date().toISOString()
-    });
+        user: req.user.username,
+        type,
+        desc,
+        svgX,
+        svgY,
+        foto: req.user.foto || "",
+        createdAt: new Date().toISOString(),
+        pointId: uuidv4().slice(-4)
+      });
+
     res.json({ ok:true, point:newPoint });
   }catch(err){
     res.status(500).json({ ok:false, msg: err.message });
@@ -369,4 +371,5 @@ app.get("/", (req,res)=>res.send("UnityMap Backend funcionando"));
    START
 ============================ */
 app.listen(PORT,()=>console.log(`Servidor corriendo en puerto ${PORT}`));
+
 
