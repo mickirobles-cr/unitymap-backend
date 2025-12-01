@@ -64,6 +64,7 @@ const PointSchema = new mongoose.Schema({
   desc: String,
   svgX: Number,
   svgY: Number,
+  foto: String,
   createdAt: String
 });
 
@@ -267,6 +268,7 @@ app.post("/points", authenticateJWT, async (req,res)=>{
       desc,
       svgX,
       svgY,
+      foto,
       createdAt: new Date().toISOString()
     });
     res.json({ ok:true, point:newPoint });
@@ -299,6 +301,7 @@ app.patch("/point/:id", authenticateJWT, async (req,res)=>{
     point.desc = desc;
     point.svgX = svgX;
     point.svgY = svgY;
+    point.foto = foto;
     await point.save();
 
     res.json({ ok:true, point });
@@ -366,3 +369,4 @@ app.get("/", (req,res)=>res.send("UnityMap Backend funcionando"));
    START
 ============================ */
 app.listen(PORT,()=>console.log(`Servidor corriendo en puerto ${PORT}`));
+
