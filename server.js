@@ -87,6 +87,17 @@ const Point = mongoose.model("Point", PointSchema);
   }
 })();
 
+// LISTAR USUARIOS (solo admin)
+app.get("/users", async (req, res) => {
+  try {
+    const users = await User.find({}, "-password"); // excluye la contraseña
+    res.json({ ok: true, users });
+  } catch (err) {
+    res.status(500).json({ ok: false, msg: err.message });
+  }
+});
+
+
 /* ============================
    LOGIN GOOGLE (REAL)
 ============================ */
@@ -324,5 +335,6 @@ app.get("/", (req, res) => {
 app.listen(PORT, () => {
   console.log(`Servidor corriendo en puerto ${PORT}`);
 });
+
 
 
