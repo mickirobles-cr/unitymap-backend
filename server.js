@@ -259,6 +259,35 @@ app.post("/login", async (req, res) => {
 });
 
 /* ============================
+   SUBIR / CAMBIAR FOTO USUARIO
+============================ */
+app.post("/upload-foto/:username", upload.single("pfp"), async (req, res) => {
+  try {
+    const username = req.params.username;
+    const user = await User.findOne({ username });
+    if (!user) return res.status(404).json({ ok: false, msg: "Usuario no encontrado" });
+
+    if (!req.file) return res.status(400).json({ ok: false, msg: "No hay archivo adjunto" });
+
+    const result = await new Promise((resolve, reject) => {
+      const stream = cloudinary.uploader.upload_stream(
+        { folder: "unitymap/pfps" },
+        (error, result) => error ? reject(error) : resolve(result)
+      );
+      stream.end(req.file.buffer);
+    });
+
+    user.foto = result.secure_url;
+    await user.save();
+
+    res.json({ ok: true, url: user.foto });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ ok: false, msg: err.message });
+  }
+});
+
+/* ============================
    POINTS
 ============================ */
 app.post("/points", async (req, res) => {
@@ -295,4 +324,5 @@ app.get("/", (req, res) => {
 app.listen(PORT, () => {
   console.log(`Servidor corriendo en puerto ${PORT}`);
 });
+
 
