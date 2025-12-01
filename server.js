@@ -6,9 +6,11 @@ import mongoose from "mongoose";
 import multer from "multer";
 import { v2 as cloudinary } from "cloudinary";
 import { OAuth2Client } from "google-auth-library";
+import jwt from "jsonwebtoken";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const JWT_SECRET = process.env.JWT_SECRET || "supersecretkey";
 
 app.use(cors());
 app.use(express.json());
@@ -87,254 +89,188 @@ const Point = mongoose.model("Point", PointSchema);
   }
 })();
 
-// LISTAR USUARIOS (solo admin)
-app.get("/users", async (req, res) => {
-  try {
-    const users = await User.find({}, "-password"); // excluye la contraseña
-    res.json({ ok: true, users });
-  } catch (err) {
-    res.status(500).json({ ok: false, msg: err.message });
-  }
-});
+/* ============================
+   MIDDLEWARE JWT
+============================ */
+const authenticateJWT = async (req, res, next) => {
+  const token = req.headers['authorization']?.split(' ')[1]; // Bearer <token>
+  if (!token) return res.status(401).json({ ok:false, msg:"Token faltante" });
 
+  try {
+    const payload = jwt.verify(token, JWT_SECRET);
+    const user = await User.findById(payload.id);
+    if (!user) return res.status(401).json({ ok:false, msg:"Usuario no encontrado" });
+    req.user = user;
+    next();
+  } catch(err) {
+    res.status(401).json({ ok:false, msg:"Token inválido" });
+  }
+};
+
+const isAdmin = (req, res, next) => {
+  if (req.user.role !== "admin") return res.status(403).json({ ok:false, msg:"No eres admin" });
+  next();
+};
 
 /* ============================
-   LOGIN GOOGLE (REAL)
+   UTIL
 ============================ */
-app.post("/login-google", async (req, res) => {
-  try {
-    const { token } = req.body;
-
-    const ticket = await googleClient.verifyIdToken({
-      idToken: token,
-      audience: process.env.GOOGLE_CLIENT_ID
-    });
-
-    const payload = ticket.getPayload();
-    const googleId = payload.sub;
-    const email = payload.email;
-    const googleFoto = payload.picture || "";
-
-    let user = await User.findOne({ googleId });
-
-    if (!user) {
-      return res.json({
-        ok: true,
-        newUser: true,
-        email,
-        googleFoto,
-        googleId
-      });
-    }
-
-    res.json({
-      ok: true,
-      newUser: false,
-      usuario: {
-        id: user._id,
-        username: user.username,
-        role: user.role,
-        foto: user.foto || googleFoto,
-        googleId: user.googleId
-      }
-    });
-
-  } catch (err) {
-    console.error("LOGIN GOOGLE ERROR:", err);
-    res.status(401).json({ ok: false, msg: "Token inválido" });
-  }
-});
+const validateId = (id) => mongoose.Types.ObjectId.isValid(id);
 
 /* ============================
-   REGISTRO GOOGLE
+   LOGIN NORMAL (JWT)
 ============================ */
-app.post("/auth/google-register", upload.single("pfp"), async (req, res) => {
-  try {
-    const { username, googleId } = req.body;
-    if (!username || !googleId) {
-      return res.status(400).json({ ok: false, msg: "Datos incompletos" });
-    }
+app.post("/login", async (req,res)=>{
+  const { username, password } = req.body;
+  const user = await User.findOne({ username });
+  if(!user) return res.json({ ok:false, msg:"Usuario no encontrado" });
 
-    const exists = await User.findOne({ username });
-    if (exists) {
-      return res.status(400).json({ ok: false, msg: "Usuario ya existe" });
-    }
+  const valid = await bcrypt.compare(password, user.password);
+  if(!valid) return res.json({ ok:false, msg:"Contraseña incorrecta" });
 
-    let fotoURL = "";
-
-    // Subida a Cloudinary si hay foto
-    if (req.file) {
-      const result = await new Promise((resolve, reject) => {
-        const stream = cloudinary.uploader.upload_stream(
-          { folder: "unitymap/pfps" },
-          (error, result) => error ? reject(error) : resolve(result)
-        );
-        stream.end(req.file.buffer);
-      });
-
-      fotoURL = result.secure_url;
-    }
-
-    const user = await User.create({
-      username,
-      googleId,
-      role: "user",
-      password: "",
-      foto: fotoURL
-    });
-
-    // Siempre devuelve la misma estructura
-    res.json({
-      ok: true,
-      usuario: {
-        id: user._id,
-        username: user.username,
-        role: user.role,
-        foto: user.foto,
-        googleId: user.googleId
-      }
-    });
-
-  } catch (err) {
-    res.status(500).json({ ok: false, msg: err.message });
-  }
+  const token = jwt.sign({ id:user._id, role:user.role }, JWT_SECRET, { expiresIn:"12h" });
+  res.json({ ok:true, usuario:user, token });
 });
-
 
 /* ============================
    REGISTER NORMAL
 ============================ */
-app.post("/auth/register", upload.single("pfp"), async (req, res) => {
-  try {
+app.post("/auth/register", upload.single("pfp"), async (req,res)=>{
+  try{
     const { username, password } = req.body;
-    if (!username || !password) {
-      return res.status(400).json({ ok: false, msg: "Datos incompletos" });
-    }
-
-    const exists = await User.findOne({ username });
-    if (exists) {
-      return res.status(400).json({ ok: false, msg: "Usuario ya existe" });
-    }
+    if(!username || !password) return res.status(400).json({ ok:false, msg:"Datos incompletos" });
+    if(await User.findOne({ username })) return res.status(400).json({ ok:false, msg:"Usuario ya existe" });
 
     const hashed = await bcrypt.hash(password, 10);
     let fotoURL = "";
-
-    if (req.file) {
-      const result = await new Promise((resolve, reject) => {
-        const stream = cloudinary.uploader.upload_stream(
-          { folder: "unitymap/pfps" },
-          (error, result) => error ? reject(error) : resolve(result)
-        );
+    if(req.file){
+      const result = await new Promise((resolve,reject)=>{
+        const stream = cloudinary.uploader.upload_stream({ folder:"unitymap/pfps" }, (err,r)=>err?reject(err):resolve(r));
         stream.end(req.file.buffer);
       });
-
       fotoURL = result.secure_url;
     }
 
-    const user = await User.create({
-      username,
-      password: hashed,
-      role: "user",
-      foto: fotoURL
-    });
+    const user = await User.create({ username, password:hashed, role:"user", foto:fotoURL });
+    const token = jwt.sign({ id:user._id, role:user.role }, JWT_SECRET, { expiresIn:"12h" });
 
-    res.json({
-      ok: true,
-      usuario: {
-        id: user._id,
-        username: user.username,
-        role: user.role,
-        foto: user.foto,
-        googleId: user.googleId || null
-      }
-    });
-
-  } catch (err) {
-    res.status(500).json({ ok: false, msg: err.message });
+    res.json({ ok:true, usuario:user, token });
+  }catch(err){
+    res.status(500).json({ ok:false, msg:err.message });
   }
 });
 
 /* ============================
-   LOGIN NORMAL
+   USERS (ADMIN ONLY)
 ============================ */
-app.post("/login", async (req, res) => {
-  const { username, password } = req.body;
-
-  const user = await User.findOne({ username });
-  if (!user) return res.json({ ok: false });
-
-  const valid = await bcrypt.compare(password, user.password);
-  if (!valid) return res.json({ ok: false });
-
-  res.json({ ok: true, usuario: user });
+app.get("/users", authenticateJWT, isAdmin, async (req,res)=>{
+  try{
+    const users = await User.find({}, "-password");
+    res.json({ ok:true, users });
+  }catch(err){
+    res.status(500).json({ ok:false, msg: err.message });
+  }
 });
 
-/* ============================
-   SUBIR / CAMBIAR FOTO USUARIO
-============================ */
-app.post("/upload-foto/:username", upload.single("pfp"), async (req, res) => {
-  try {
-    const username = req.params.username;
-    const user = await User.findOne({ username });
-    if (!user) return res.status(404).json({ ok: false, msg: "Usuario no encontrado" });
+app.delete("/users/:id", authenticateJWT, isAdmin, async (req,res)=>{
+  const { id } = req.params;
+  if(!validateId(id)) return res.status(400).json({ ok:false, msg:"ID inválido" });
 
-    if (!req.file) return res.status(400).json({ ok: false, msg: "No hay archivo adjunto" });
+  try{
+    const user = await User.findById(id);
+    if(!user) return res.status(404).json({ ok:false, msg:"Usuario no encontrado" });
+    if(user.username === "admin") return res.status(403).json({ ok:false, msg:"No puedes eliminar al admin" });
 
-    const result = await new Promise((resolve, reject) => {
-      const stream = cloudinary.uploader.upload_stream(
-        { folder: "unitymap/pfps" },
-        (error, result) => error ? reject(error) : resolve(result)
-      );
-      stream.end(req.file.buffer);
-    });
+    await User.findByIdAndDelete(id);
+    res.json({ ok:true, msg:"Usuario eliminado" });
+  }catch(err){
+    res.status(500).json({ ok:false, msg: err.message });
+  }
+});
 
-    user.foto = result.secure_url;
+app.patch("/users/:id/role", authenticateJWT, isAdmin, async (req,res)=>{
+  const { id } = req.params;
+  const { role } = req.body;
+  if(!validateId(id)) return res.status(400).json({ ok:false, msg:"ID inválido" });
+  if(!["admin","user"].includes(role)) return res.status(400).json({ ok:false, msg:"Rol inválido" });
+
+  try{
+    const user = await User.findById(id);
+    if(!user) return res.status(404).json({ ok:false, msg:"Usuario no encontrado" });
+    if(user.username === "admin") return res.status(403).json({ ok:false, msg:"No puedes cambiar rol del admin" });
+
+    user.role = role;
     await user.save();
-
-    res.json({ ok: true, url: user.foto });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ ok: false, msg: err.message });
+    res.json({ ok:true, usuario:{ id:user._id, username:user.username, role:user.role } });
+  }catch(err){
+    res.status(500).json({ ok:false, msg: err.message });
   }
 });
 
 /* ============================
    POINTS
 ============================ */
-app.post("/points", async (req, res) => {
-  const { user, type, desc, svgX, svgY } = req.body;
+app.post("/points", authenticateJWT, async (req,res)=>{
+  const { type, desc, svgX, svgY } = req.body;
+  if(!type || !desc || svgX==null || svgY==null) return res.status(400).json({ ok:false, msg:"Datos incompletos" });
 
-  const newPoint = await Point.create({
-    pointId: uuidv4(),
-    user,
-    type,
-    desc,
-    svgX,
-    svgY,
-    createdAt: new Date().toISOString()
-  });
-
-  res.json({ ok: true, point: newPoint });
+  try{
+    const newPoint = await Point.create({
+      pointId: uuidv4(),
+      user:req.user.username,
+      type,
+      desc,
+      svgX,
+      svgY,
+      createdAt: new Date().toISOString()
+    });
+    res.json({ ok:true, point:newPoint });
+  }catch(err){
+    res.status(500).json({ ok:false, msg: err.message });
+  }
 });
 
-app.get("/points", async (req, res) => {
-  const points = await Point.find();
-  res.json({ ok: true, points });
+app.get("/points", authenticateJWT, async (req,res)=>{
+  try{
+    const points = await Point.find();
+    res.json({ ok:true, points });
+  }catch(err){
+    res.status(500).json({ ok:false, msg: err.message });
+  }
+});
+
+app.delete("/point/:id", authenticateJWT, async (req,res)=>{
+  const { id } = req.params;
+  if(!validateId(id)) return res.status(400).json({ ok:false, msg:"ID inválido" });
+
+  try{
+    const point = await Point.findById(id);
+    if(!point) return res.status(404).json({ ok:false, msg:"Punto no encontrado" });
+    if(point.user !== req.user.username && req.user.role !== "admin") 
+      return res.status(403).json({ ok:false, msg:"No tienes permiso" });
+
+    await Point.findByIdAndDelete(id);
+    res.json({ ok:true, msg:"Punto eliminado" });
+  }catch(err){
+    res.status(500).json({ ok:false, msg: err.message });
+  }
+});
+
+app.delete("/points", authenticateJWT, isAdmin, async (req,res)=>{
+  try{
+    await Point.deleteMany({});
+    res.json({ ok:true, msg:"Todos los puntos eliminados" });
+  }catch(err){
+    res.status(500).json({ ok:false, msg: err.message });
+  }
 });
 
 /* ============================
    ROOT
 ============================ */
-app.get("/", (req, res) => {
-  res.send("UnityMap Backend funcionando");
-});
+app.get("/", (req,res)=>res.send("UnityMap Backend funcionando"));
 
 /* ============================
    START
 ============================ */
-app.listen(PORT, () => {
-  console.log(`Servidor corriendo en puerto ${PORT}`);
-});
-
-
-
+app.listen(PORT,()=>console.log(`Servidor corriendo en puerto ${PORT}`));
